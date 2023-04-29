@@ -38,6 +38,7 @@ from traitlets import (
     TraitError,
     Unicode,
     default,
+    observe,
     validate,
 )
 
@@ -45,6 +46,8 @@ from jupyter_server import DEFAULT_EVENTS_SCHEMA_PATH
 from jupyter_server._tz import isoformat, utcnow
 from jupyter_server.prometheus.metrics import KERNEL_CURRENTLY_RUNNING_TOTAL
 from jupyter_server.utils import ApiPath, import_item, to_os_path
+
+from ..kernelspecs.renaming import normalize_kernel_name
 
 
 class MappingKernelManager(MultiKernelManager):
@@ -206,6 +209,7 @@ class MappingKernelManager(MultiKernelManager):
 
     # TODO DEC 2022: Revise the type-ignore once the signatures have been changed upstream
     # https://github.com/jupyter/jupyter_client/pull/905
+    @normalize_kernel_name
     async def _async_start_kernel(  # type:ignore[override]
         self, *, kernel_id: Optional[str] = None, path: Optional[ApiPath] = None, **kwargs: str
     ) -> str:
@@ -700,12 +704,23 @@ class AsyncMappingKernelManager(MappingKernelManager, AsyncMultiKernelManager): 
             )
         return km_class_value
 
+    @observe("default_kernel_name")
+    def _observe_default_kernel_name(self, change):
+        if hasattr(self.kernel_spec_manager, "maybe_rename_kernel"):
+            renamed_kernel = self.kernel_spec_manager.maybe_rename_kernel(change.new)
+            if renamed_kernel is not change.new:
+                self.default_kernel_name = renamed_kernel
+
     def __init__(self, **kwargs):
         """Initialize an async mapping kernel manager."""
         self.pinned_superclass = MultiKernelManager
         self._pending_kernel_tasks = {}
         self.pinned_superclass.__init__(self, **kwargs)
         self.last_kernel_activity = utcnow()
+        if hasattr(self.kernel_spec_manager, "rename_kernel"):
+            self.default_kernel_name = self.kernel_spec_manager.rename_kernel(
+                self.default_kernel_name
+            )
 
 
 def emit_kernel_action_event(success_msg: str = ""):  # type: ignore
