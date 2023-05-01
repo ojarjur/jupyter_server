@@ -207,11 +207,9 @@ class MappingKernelManager(MultiKernelManager):
         self._kernel_connections.pop(kernel_id, None)
         self._kernel_ports.pop(kernel_id, None)
 
-    # TODO DEC 2022: Revise the type-ignore once the signatures have been changed upstream
-    # https://github.com/jupyter/jupyter_client/pull/905
     @normalize_kernel_name
-    async def _async_start_kernel(  # type:ignore[override]
-        self, *, kernel_id: Optional[str] = None, path: Optional[ApiPath] = None, **kwargs: str
+    async def _async_start_kernel(
+        self, kernel_id: Optional[str] = None, path: Optional[ApiPath] = None, **kwargs: str
     ) -> str:
         """Start a kernel for a session and return its kernel_id.
 
@@ -265,7 +263,7 @@ class MappingKernelManager(MultiKernelManager):
     # see https://github.com/jupyter-server/jupyter_server/issues/1165
     # this assignment is technically incorrect, but might need a change of API
     # in jupyter_client.
-    start_kernel = _async_start_kernel  # type:ignore[assignment]
+    start_kernel = _async_start_kernel
 
     async def _finish_kernel_start(self, kernel_id):
         """Handle a kernel that finishes starting."""
@@ -682,7 +680,7 @@ class MappingKernelManager(MultiKernelManager):
 
 # AsyncMappingKernelManager inherits as much as possible from MappingKernelManager,
 # overriding only what is different.
-class AsyncMappingKernelManager(MappingKernelManager, AsyncMultiKernelManager):  # type:ignore[misc]
+class AsyncMappingKernelManager(MappingKernelManager, AsyncMultiKernelManager):
     """An asynchronous mapping kernel manager."""
 
     @default("kernel_manager_class")
@@ -706,10 +704,25 @@ class AsyncMappingKernelManager(MappingKernelManager, AsyncMultiKernelManager): 
 
     @observe("default_kernel_name")
     def _observe_default_kernel_name(self, change):
-        if hasattr(self.kernel_spec_manager, "maybe_rename_kernel"):
-            renamed_kernel = self.kernel_spec_manager.maybe_rename_kernel(change.new)
-            if renamed_kernel is not change.new:
-                self.default_kernel_name = renamed_kernel
+        if hasattr(self.kernel_spec_manager, "default_kernel_name"):
+            # If the kernel spec manager defines a default kernel name, treat that
+            # one as authoritative.
+            kernel_name = change.new
+            if kernel_name == self.kernel_spec_manager.default_kernel_name:
+                return
+            self.log.debug(
+                f"The MultiKernelManager default kernel name '{kernel_name}'"
+                " differs from the KernelSpecManager default kernel name"
+                f" '{self.kernel_spec_manager.default_kernel_name}'..."
+                " Using the kernel spec manager's default name."
+            )
+            self.default_kernel_name = self.kernel_spec_manager.default_kernel_name
+
+    def _on_kernel_spec_manager_default_kernel_name_changed(self, change):
+        # Sync the kernel-spec-manager's trait to the multi-kernel-manager's trait.
+        kernel_name = change.new
+        self.log.debug(f"KernelSpecManager default kernel name changed: {kernel_name}")
+        self.default_kernel_name = kernel_name
 
     def __init__(self, **kwargs):
         """Initialize an async mapping kernel manager."""
@@ -717,10 +730,13 @@ class AsyncMappingKernelManager(MappingKernelManager, AsyncMultiKernelManager): 
         self._pending_kernel_tasks = {}
         self.pinned_superclass.__init__(self, **kwargs)
         self.last_kernel_activity = utcnow()
-        if hasattr(self.kernel_spec_manager, "rename_kernel"):
-            self.default_kernel_name = self.kernel_spec_manager.rename_kernel(
-                self.default_kernel_name
+
+        if hasattr(self.kernel_spec_manager, "default_kernel_name"):
+            self.kernel_spec_manager.observe(
+                self._on_kernel_spec_manager_default_kernel_name_changed, "default_kernel_name"
             )
+            if not self.kernel_spec_manager.default_kernel_name:
+                self.kernel_spec_manager.default_kernel_name = self.default_kernel_name
 
 
 def emit_kernel_action_event(success_msg: str = ""):  # type: ignore

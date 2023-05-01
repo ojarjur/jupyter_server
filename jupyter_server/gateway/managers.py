@@ -16,10 +16,10 @@ from jupyter_client.asynchronous.client import AsyncKernelClient
 from jupyter_client.clientabc import KernelClientABC
 from jupyter_client.kernelspec import KernelSpecManager
 from jupyter_client.managerabc import KernelManagerABC
-from jupyter_core.utils import ensure_async
+from jupyter_core.utils import ensure_async, run_sync
 from tornado import web
 from tornado.escape import json_decode, json_encode, url_escape, utf8
-from traitlets import DottedObjectName, Instance, Type, Unicode, default
+from traitlets import DottedObjectName, Instance, Type, Unicode, default, observe
 
 from .._tz import UTC, utcnow
 from ..services.kernels.kernelmanager import (
@@ -53,13 +53,6 @@ class GatewayMappingKernelManager(AsyncMappingKernelManager):
         self.kernels_url = url_path_join(
             GatewayClient.instance().url, GatewayClient.instance().kernels_endpoint
         )
-        if hasattr(self.kernel_spec_manager, "default_kernel_name"):
-            self.kernel_spec_manager.observe(
-                self.on_default_kernel_name_change, "default_kernel_name"
-            )
-
-    def on_default_kernel_name_change(self, change):
-        self.default_kernel_name = change.new
 
     def remove_kernel(self, kernel_id):
         """Complete override since we want to be more tolerant of missing keys"""
@@ -221,6 +214,25 @@ class GatewayKernelSpecManager(KernelSpecManager):
 
     default_kernel_name = Unicode(allow_none=True)
 
+    # Use a hidden trait for the default kernel name we get from the remote.
+    #
+    # This is automatically copied to the corresponding public trait.
+    #
+    # We use two layers of trait so that sub classes can modify the public
+    # trait without confusing the logic that tracks changes to the remote
+    # default kernel name.
+    _remote_default_kernel_name = Unicode(allow_none=True)
+
+    @default("default_kernel_name")
+    def _default_default_kernel_name(self):
+        # The default kernel name is taken from the remote gateway
+        run_sync(self.get_all_specs)()
+        return self._remote_default_kernel_name
+
+    @observe("_remote_default_kernel_name")
+    def _observe_remote_default_kernel_name(self, change):
+        self.default_kernel_name = change.new
+
     def __init__(self, **kwargs):
         """Initialize a gateway kernel spec manager."""
         super().__init__(**kwargs)
@@ -285,12 +297,12 @@ class GatewayKernelSpecManager(KernelSpecManager):
         # caller of this method will still return this server's value until
         # the next fetch of kernelspecs - at which time they'll match.
         remote_default_kernel_name = fetched_kspecs.get("default")
-        if remote_default_kernel_name != self.default_kernel_name:
+        if remote_default_kernel_name != self._remote_default_kernel_name:
             self.log.info(
                 f"Default kernel name on Gateway server ({remote_default_kernel_name}) differs from "
-                f"Notebook server ({self.default_kernel_name}).  Updating to Gateway server's value."
+                f"Notebook server ({self._remote_default_kernel_name}).  Updating to Gateway server's value."
             )
-            self.default_kernel_name = remote_default_kernel_name
+            self._remote_default_kernel_name = remote_default_kernel_name
 
         remote_kspecs = fetched_kspecs.get("kernelspecs")
         return remote_kspecs

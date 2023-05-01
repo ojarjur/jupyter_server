@@ -6,7 +6,8 @@ from typing import Any
 
 from jupyter_client.kernelspec import KernelSpecManager
 from jupyter_core.utils import ensure_async, run_sync
-from traitlets import HasTraits, Unicode, default
+from traitlets import Unicode, default, observe
+from traitlets.config import LoggingConfigurable
 
 
 def normalize_kernel_name(method):
@@ -24,7 +25,7 @@ def normalize_kernel_name(method):
     return wrapped_method
 
 
-class RenamingKernelSpecManagerMixin(HasTraits):
+class RenamingKernelSpecManagerMixin(LoggingConfigurable):
     """KernelSpecManager mixin that renames kernel specs.
 
     The base KernelSpecManager class only has synchronous methods, but some child
@@ -71,6 +72,16 @@ class RenamingKernelSpecManagerMixin(HasTraits):
 
     default_kernel_name = Unicode(allow_none=True)
 
+    @observe("default_kernel_name")
+    def _observe_default_kernel_name(self, change):
+        kernel_name = change.new
+        if self.original_kernel_name(kernel_name) is not kernel_name:
+            # The default kernel name has already been renamed
+            return
+        updated_kernel_name = self.rename_kernel(kernel_name)
+        self.log.debug(f"Renaming default kernel name {kernel_name} to {updated_kernel_name}")
+        self.default_kernel_name = updated_kernel_name
+
     def rename_kernel(self, kernel_name: str) -> str:
         """Rename the supplied kernel spec based on the configured format string."""
         if not hasattr(self, "original_kernel_names"):
@@ -80,15 +91,6 @@ class RenamingKernelSpecManagerMixin(HasTraits):
         self.original_kernel_names[renamed] = kernel_name
         return renamed
 
-    def maybe_rename_kernel(self, kernel_name: str) -> str:
-        """Rename the supplied kernel if it is not already the result of a rename."""
-        if not hasattr(self, "original_kernel_names"):
-            self.original_kernel_names = {}
-        if kernel_name in self.original_kernel_names:
-            # The kernel was already renamed
-            return kernel_name
-        return self.rename_kernel(kernel_name)
-
     def original_kernel_name(self, kernel_name: str) -> str:
         if not hasattr(self, "original_kernel_names"):
             return kernel_name
@@ -97,7 +99,7 @@ class RenamingKernelSpecManagerMixin(HasTraits):
 
     async def async_get_all_specs(self):
         ks = {}
-        original_ks = await ensure_async(super().get_all_specs())
+        original_ks = await ensure_async(super().get_all_specs())  # type:ignore[misc]
         for s, k in original_ks.items():
             spec_name = s
             kernel_spec = k
@@ -116,25 +118,27 @@ class RenamingKernelSpecManagerMixin(HasTraits):
             resources = kernel_spec["resources"]
             for name, value in resources.items():
                 resources[name] = value.replace(original_prefix, new_prefix)
-        if hasattr(super(), "default_kernel_name"):
-            self.default_kernel_name = self.rename_kernel(super().default_kernel_name)
         return ks
 
     def get_all_specs(self):
         return run_sync(self.async_get_all_specs)()
 
-    async def async_get_kernel_spec(self, kernel_name: str, *args: Any, **kwargs: Any):
+    async def async_get_kernel_spec(self, kernel_name: str, *args: Any, **kwargs: Any) -> Any:
         kernel_name = self.original_kernel_name(kernel_name)
-        return await ensure_async(super().get_kernel_spec(kernel_name, *args, **kwargs))
+        return await ensure_async(
+            super().get_kernel_spec(kernel_name, *args, **kwargs)
+        )  # type:ignore[misc]
 
-    def get_kernel_spec(self, kernel_name: str, *args: Any, **kwargs: Any):
+    def get_kernel_spec(self, kernel_name: str, *args: Any, **kwargs: Any) -> Any:
         return run_sync(self.async_get_kernel_spec)(kernel_name, *args, **kwargs)
 
-    async def get_kernel_spec_resource(self, kernel_name: str, *args: Any, **kwargs: Any):
+    async def get_kernel_spec_resource(self, kernel_name: str, *args: Any, **kwargs: Any) -> Any:
         if not hasattr(super(), "get_kernel_spec_resource"):
             return None
         kernel_name = self.original_kernel_name(kernel_name)
-        return await ensure_async(super().get_kernel_spec_resource(kernel_name, *args, **kwargs))
+        return await ensure_async(
+            super().get_kernel_spec_resource(kernel_name, *args, **kwargs)
+        )  # type:ignore[misc]
 
 
 class RenamingKernelSpecManager(RenamingKernelSpecManagerMixin, KernelSpecManager):
