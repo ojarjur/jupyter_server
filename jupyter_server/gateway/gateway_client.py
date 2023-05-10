@@ -95,6 +95,25 @@ class GatewayClient(SingletonConfigurable):
     helper methods to build request arguments out of the various config
     """
 
+    enable_local_kernels_default_value = False
+    enable_local_kernels_env = "JUPYTER_GATEWAY_ENABLE_LOCAL_KERNELS"
+    enable_local_kernels = Bool(
+        default_value=enable_local_kernels_default_value,
+        config=True,
+        help="""If enabled, then gateway kernels augment, rather than replace local kernels.
+        (JUPYTER_GATEWAY_ENABLE_LOCAL_KERNELS env var)
+        """,
+    )
+
+    @default("enable_local_kernels")
+    def _enable_local_kernels_default(self):
+        return bool(
+            os.environ.get(
+                self.enable_local_kernels_env, str(self.enable_local_kernels_default_value).lower()
+            )
+            not in ["no", "false"]
+        )
+
     event_schema_id = JUPYTER_SERVER_EVENTS_URI + "/gateway_client/v1"
     event_logger = Instance(EventLogger).tag(config=True)
 
