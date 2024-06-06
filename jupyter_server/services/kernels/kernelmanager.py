@@ -532,6 +532,24 @@ class MappingKernelManager(MultiKernelManager):
             raise web.HTTPError(404, "Kernel does not exist: %s" % kernel_id)
 
     # monitoring activity:
+    tracked_message_types = List(
+        trait=Unicode(),
+        config=True,
+        default_value=[
+            "comm_close",
+            "comm_msg",
+            "comm_open",
+            "complete_request",
+            "is_complete_request",
+            "execute_input",
+            "execute_reply",
+            "execute_request",
+            "inspect_request",
+        ],
+        help="""List of kernel message types included in user activity tracking.
+
+        This should be a subset of the message types sent on the shell channel.""",
+    )
 
     def start_watching_activity(self, kernel_id):
         """Start watching IOPub messages on a kernel for activity.
@@ -552,15 +570,23 @@ class MappingKernelManager(MultiKernelManager):
 
         def record_activity(msg_list):
             """Record an IOPub message arriving from a kernel"""
-            self.last_kernel_activity = kernel.last_activity = utcnow()
-
             idents, fed_msg_list = session.feed_identities(msg_list)
             msg = session.deserialize(fed_msg_list, content=False)
 
             msg_type = msg["header"]["msg_type"]
+            parent_msg_type = msg.get("parent_header", {}).get("msg_type", None)
+            if (
+                (msg_type in self.tracked_message_types)
+                or (parent_msg_type in self.tracked_message_types)
+                or kernel.execution_state == "busy"
+            ):
+                self.last_kernel_activity = kernel.last_activity = utcnow()
             if msg_type == "status":
                 msg = session.deserialize(fed_msg_list)
-                kernel.execution_state = msg["content"]["execution_state"]
+                if kernel.execution_state == "starting":
+                    kernel.execution_state = "idle"
+                if parent_msg_type in self.tracked_message_types:
+                    kernel.execution_state = msg["content"]["execution_state"]
                 self.log.debug(
                     "activity on %s: %s (%s)",
                     kernel_id,
