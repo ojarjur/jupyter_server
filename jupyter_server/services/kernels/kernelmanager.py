@@ -37,6 +37,7 @@ from traitlets import (
     Integer,
     List,
     TraitError,
+    Type,
     Unicode,
     default,
     observe,
@@ -49,6 +50,8 @@ from jupyter_server.prometheus.metrics import KERNEL_CURRENTLY_RUNNING_TOTAL
 from jupyter_server.utils import ApiPath, import_item, to_os_path
 
 from ..kernelspecs.renaming import normalize_kernel_name
+from .connection.base import BaseKernelWebsocketConnection
+from .connection.channels import ZMQChannelsWebsocketConnection
 
 
 class MappingKernelManager(MultiKernelManager):
@@ -861,6 +864,14 @@ class ServerKernelManager(AsyncIOLoopKernelManager):
     ).tag(config=True)
 
     event_logger = Instance(EventLogger)
+
+    websocket_connection_class = Type(
+        default_value=ZMQChannelsWebsocketConnection,
+        klass=BaseKernelWebsocketConnection,
+        help="""
+        The websocket connection class to use for this manager's kernels.
+        """,
+    ).tag(config=True)
 
     @default("event_logger")
     def _default_event_logger(self):

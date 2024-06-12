@@ -92,6 +92,7 @@ from jupyter_server.gateway.managers import (
     GatewayClient,
     GatewayKernelSpecManager,
     GatewayMappingKernelManager,
+    GatewayRoutingMappingKernelManager,
     GatewaySessionManager,
 )
 from jupyter_server.log import log_request
@@ -107,6 +108,10 @@ from jupyter_server.services.kernels.connection.channels import ZMQChannelsWebso
 from jupyter_server.services.kernels.kernelmanager import (
     AsyncMappingKernelManager,
     MappingKernelManager,
+)
+from jupyter_server.services.kernels.routing import (
+    RoutingKernelManager,
+    RoutingKernelSpecManager,
 )
 from jupyter_server.services.sessions.sessionmanager import SessionManager
 from jupyter_server.utils import (
@@ -777,6 +782,8 @@ class ServerApp(JupyterApp):
         MappingKernelManager,
         KernelSpecManager,
         AsyncMappingKernelManager,
+        RoutingKernelSpecManager,
+        RoutingKernelManager,
         ContentsManager,
         FileContentsManager,
         AsyncContentsManager,
@@ -787,6 +794,7 @@ class ServerApp(JupyterApp):
         GatewaySessionManager,
         GatewayWebSocketConnection,
         GatewayClient,
+        GatewayRoutingMappingKernelManager,
         Authorizer,
         EventLogger,
         ZMQChannelsWebsocketConnection,
@@ -1480,7 +1488,10 @@ class ServerApp(JupyterApp):
     @default("kernel_manager_class")
     def _default_kernel_manager_class(self):
         if self.gateway_config.gateway_enabled:
-            return "jupyter_server.gateway.managers.GatewayMappingKernelManager"
+            if self.gateway_config.enable_local_kernels:
+                return "jupyter_server.gateway.managers.GatewayRoutingMappingKernelManager"
+            else:
+                return "jupyter_server.gateway.managers.GatewayMappingKernelManager"
         return AsyncMappingKernelManager
 
     session_manager_class = Type(
@@ -1490,7 +1501,7 @@ class ServerApp(JupyterApp):
 
     @default("session_manager_class")
     def _default_session_manager_class(self):
-        if self.gateway_config.gateway_enabled:
+        if self.gateway_config.gateway_enabled and not self.gateway_config.enable_local_kernels:
             return "jupyter_server.gateway.managers.GatewaySessionManager"
         return SessionManager
 
@@ -1528,7 +1539,10 @@ class ServerApp(JupyterApp):
     @default("kernel_spec_manager_class")
     def _default_kernel_spec_manager_class(self):
         if self.gateway_config.gateway_enabled:
-            return "jupyter_server.gateway.managers.GatewayKernelSpecManager"
+            if self.gateway_config.enable_local_kernels:
+                return "jupyter_server.services.kernels.routing.RoutingKernelSpecManager"
+            else:
+                return "jupyter_server.gateway.managers.GatewayKernelSpecManager"
         return KernelSpecManager
 
     login_handler_class = Type(

@@ -30,6 +30,7 @@ from ..services.kernels.kernelmanager import (
 from ..services.kernelspecs.renaming import RenamingKernelSpecManagerMixin, normalize_kernel_name
 from ..services.sessions.sessionmanager import SessionManager
 from ..utils import url_path_join
+from .connections import GatewayWebSocketConnection
 from .gateway_client import GatewayClient, gateway_request
 
 
@@ -383,6 +384,35 @@ class GatewayRenamingKernelSpecManager(RenamingKernelSpecManagerMixin, GatewayKe
     )
 
 
+class GatewayRoutingMappingKernelManager(AsyncMappingKernelManager):
+    kernel_spec_manager = Instance(
+        "jupyter_server.services.kernels.routing.RoutingKernelSpecManager"
+    )
+
+    @default("kernel_manager_class")
+    def _default_kernel_manager_class(self):
+        return "jupyter_server.services.kernels.routing.RoutingKernelManager"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        default_ksm = KernelSpecManager(parent=self.parent)
+        default_manager = AsyncMappingKernelManager(
+            parent=self.parent,
+            log=self.log,
+            connection_dir=self.connection_dir,
+            kernel_spec_manager=default_ksm,
+        )
+        gateway_ksm = GatewayRenamingKernelSpecManager(parent=self.parent)
+        gateway_manager = GatewayMappingKernelManager(
+            parent=self.parent,
+            log=self.log,
+            connection_dir=self.connection_dir,
+            kernel_spec_manager=gateway_ksm,
+        )
+        self.kernel_spec_manager.default_manager = default_manager
+        self.kernel_spec_manager.additional_managers = [gateway_manager]
+
+
 class GatewaySessionManager(SessionManager):
     """A gateway session manager."""
 
@@ -435,6 +465,8 @@ class GatewayKernelManager(ServerKernelManager):
 
     client_class = DottedObjectName("jupyter_server.gateway.managers.GatewayKernelClient")
     client_factory = Type(klass="jupyter_server.gateway.managers.GatewayKernelClient")
+
+    websocket_connection_class = GatewayWebSocketConnection
 
     # --------------------------------------------------------------------------
     # create a Client connected to our Kernel
