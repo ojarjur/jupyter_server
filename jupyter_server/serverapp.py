@@ -104,11 +104,6 @@ from jupyter_server.extension.config import ExtensionConfigManager
 from jupyter_server.extension.manager import ExtensionManager
 from jupyter_server.extension.serverextension import ServerExtensionApp
 from jupyter_server.gateway.gateway_client import GatewayClient
-from jupyter_server.gateway.managers import (
-    GatewayKernelSpecManager,
-    GatewayMappingKernelManager,
-    GatewaySessionManager,
-)
 from jupyter_server.log import log_request
 from jupyter_server.prometheus.metrics import (
     ACTIVE_DURATION,
@@ -129,6 +124,10 @@ from jupyter_server.services.kernels.connection.channels import ZMQChannelsWebso
 from jupyter_server.services.kernels.kernelmanager import (
     AsyncMappingKernelManager,
     MappingKernelManager,
+)
+from jupyter_server.services.kernels.routing import (
+    RoutingKernelSpecManager,
+    RoutingMappingKernelManager,
 )
 from jupyter_server.services.sessions.sessionmanager import SessionManager
 from jupyter_server.utils import (
@@ -892,13 +891,12 @@ class ServerApp(JupyterApp):
         AsyncContentsManager,
         AsyncFileContentsManager,
         NotebookNotary,
-        GatewayMappingKernelManager,
-        GatewayKernelSpecManager,
-        GatewaySessionManager,
         GatewayClient,
         Authorizer,
         EventLogger,
         ZMQChannelsWebsocketConnection,
+        RoutingKernelSpecManager,
+        RoutingMappingKernelManager,
     ]
 
     subcommands: dict[str, t.Any] = {
@@ -1619,9 +1617,7 @@ class ServerApp(JupyterApp):
 
     @default("kernel_manager_class")
     def _default_kernel_manager_class(self) -> t.Union[str, type[AsyncMappingKernelManager]]:
-        if self.gateway_config.gateway_enabled:
-            return "jupyter_server.gateway.managers.GatewayMappingKernelManager"
-        return AsyncMappingKernelManager
+        return RoutingMappingKernelManager
 
     session_manager_class = Type(
         config=True,
@@ -1642,6 +1638,11 @@ class ServerApp(JupyterApp):
     def _default_kernel_websocket_connection_class(
         self,
     ) -> t.Union[str, type[ZMQChannelsWebsocketConnection]]:
+        if issubclass(
+            self.kernel_manager_class,
+            RoutingMappingKernelManager,
+        ):
+            return "jupyter_server.services.kernels.routing.RoutingKernelManagerWebsocketConnection"
         return ZMQChannelsWebsocketConnection
 
     websocket_ping_interval = Integer(
@@ -1691,8 +1692,11 @@ class ServerApp(JupyterApp):
 
     @default("kernel_spec_manager_class")
     def _default_kernel_spec_manager_class(self) -> t.Union[str, type[KernelSpecManager]]:
-        if self.gateway_config.gateway_enabled:
-            return "jupyter_server.gateway.managers.GatewayKernelSpecManager"
+        if issubclass(
+            self.kernel_manager_class,
+            RoutingMappingKernelManager,
+        ):
+            return RoutingKernelSpecManager
         return KernelSpecManager
 
     login_handler_class = Type(
@@ -2872,7 +2876,7 @@ class ServerApp(JupyterApp):
             version=ServerApp.version, url=self.display_url
         )
         if hasattr(self.kernel_manager, "info"):
-            info += self.kernel_manager.info
+            info += "\n" + self.kernel_manager.info
         return info
 
     def server_info(self) -> dict[str, t.Any]:

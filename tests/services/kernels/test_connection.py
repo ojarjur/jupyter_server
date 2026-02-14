@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from jupyter_client.jsonutil import json_clean, json_default
 from jupyter_client.session import Session
+from jupyter_core.utils import ensure_async
 from tornado.httpserver import HTTPRequest
 
 from jupyter_server.serverapp import ServerApp
@@ -20,10 +21,13 @@ async def test_websocket_connection(jp_serverapp: ServerApp) -> None:
     handler = KernelWebsocketHandler(app.web_app, request)
     handler.ws_connection = MagicMock()
     handler.ws_connection.is_closing = lambda: False
-    conn = ZMQChannelsWebsocketConnection(parent=kernel, websocket_handler=handler)
+    conn_class = ZMQChannelsWebsocketConnection
+    if hasattr(kernel, "websocket_connection_class"):
+        conn_class = kernel.websocket_connection_class
+    conn = conn_class(parent=kernel, websocket_handler=handler)
     handler.connection = conn
     await conn.prepare()
-    conn.connect()
+    await ensure_async(conn.connect())
     await asyncio.wrap_future(conn.nudge())
     session: Session = kernel.session
     msg = session.msg("data_pub", content={"a": "b"})
