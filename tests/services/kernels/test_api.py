@@ -1,7 +1,9 @@
 import asyncio
+import datetime
 import json
 import os
 import time
+import uuid
 import warnings
 
 import jupyter_client
@@ -273,6 +275,30 @@ async def test_connection(jp_fetch, jp_ws_fetch, jp_http_port, jp_auth_header):
     # Open a websocket connection.
     ws = await jp_ws_fetch("api", "kernels", kid, "channels")
 
+    # Send one `kernel_info_request` message on the shell channel and wait for the reply
+    session_id = uuid.uuid1().hex
+    message_id = uuid.uuid1().hex
+    await ws.write_message(
+        json.dumps(
+            {
+                "channel": "shell",
+                "header": {
+                    "date": datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
+                    "session": session_id,
+                    "msg_id": message_id,
+                    "msg_type": "kernel_info_request",
+                    "username": "",
+                    "version": "5.2",
+                },
+                "parent_header": {},
+                "metadata": {},
+                "content": {},
+                "buffers": [],
+            }
+        )
+    )
+    await poll_for_request_reply_message(message_id, "kernel_info_request", ws)
+
     # Test that it was opened.
     r = await jp_fetch("api", "kernels", kid, method="GET")
     model = json.loads(r.body.decode())
@@ -292,3 +318,21 @@ async def test_connection(jp_fetch, jp_ws_fetch, jp_http_port, jp_auth_header):
     r = await jp_fetch("api", "kernels", kid, method="GET")
     model = json.loads(r.body.decode())
     assert model["connections"] == 0
+
+
+async def poll_for_request_reply_message(parent_message_id, parent_message_type, ws):
+    reply_message_type = parent_message_type.replace("_request", "_reply")
+    for _attempt in range(10):
+        resp = await ws.read_message()
+        resp_json = json.loads(resp)
+        print(resp_json)
+        parent_message = resp_json.get("parent_header", {}).get("msg_id", None)
+        if parent_message != parent_message_id:
+            continue
+        response_type = resp_json.get("header", {}).get("msg_type", None)
+        if response_type != reply_message_type:
+            continue
+        return
+    raise AssertionError(
+        f"Failed to receive a reply to the {parent_message_type} message {parent_message_id} after 10 attempts"
+    )
